@@ -1,5 +1,6 @@
-from sqlalchemy import Column,Integer,String,Float,ForeignKey,JSON,CheckConstraint
+from sqlalchemy import Column,Integer,String,Float,ForeignKey,JSON,CheckConstraint,UniqueConstraint
 from .database import Base
+from .constants import FIT_LABELS,TRIAL_STATES
 class User(Base):
  __tablename__='users'
  id=Column(Integer,primary_key=True);email=Column(String(160),unique=True,nullable=False);password=Column(String(160),nullable=False);role=Column(String(20),nullable=False)
@@ -31,6 +32,17 @@ class FitAssessment(Base):
 class Fitting(Base):
  __tablename__='fittings'
  id=Column(Integer,primary_key=True);garment_id=Column(Integer,ForeignKey('garments.id'),nullable=False);profile_id=Column(Integer,ForeignKey('profiles.id'),nullable=False);slot=Column(Integer,nullable=False);starts=Column(String(32),nullable=False);ends=Column(String(32),nullable=False);state=Column(String(20),default='reserved',nullable=False)
+class Trial(Base):
+ __tablename__='trials'
+ id=Column(Integer,primary_key=True);fitting_id=Column(Integer,ForeignKey('fittings.id'),unique=True,nullable=False);garment_id=Column(Integer,ForeignKey('garments.id'),nullable=False);cut=Column(Integer,nullable=False);suggested=Column(String(20),nullable=True);actual=Column(String(20),nullable=True);state=Column(String(20),default='in_progress',nullable=False);version=Column(Integer,default=1,nullable=False);fitting_day=Column(String(10),nullable=False);started_at=Column(String(32),nullable=False);completed_at=Column(String(32),default='',nullable=False)
+ __table_args__=(CheckConstraint("state in %s"%(TRIAL_STATES,)),CheckConstraint("suggested is null or suggested in %s"%(FIT_LABELS,)),CheckConstraint("actual is null or actual in %s"%(FIT_LABELS,)))
+class TrialRevision(Base):
+ __tablename__='trial_revisions'
+ id=Column(Integer,primary_key=True);trial_id=Column(Integer,ForeignKey('trials.id'),nullable=False);old_actual=Column(String(20),nullable=False);new_actual=Column(String(20),nullable=False);reason=Column(String(500),nullable=False);base_version=Column(Integer,nullable=False);new_version=Column(Integer,nullable=False);actor=Column(String(160),nullable=False);revised_at=Column(String(32),nullable=False)
+class DailyReport(Base):
+ __tablename__='daily_reports'
+ id=Column(Integer,primary_key=True);day=Column(String(10),nullable=False);version=Column(Integer,default=1,nullable=False);data_hash=Column(String(64),nullable=False);payload=Column(JSON,nullable=False);reused=Column(Integer,default=0,nullable=False);created_at=Column(String(32),nullable=False)
+ __table_args__=(UniqueConstraint('day','version'),)
 class Sale(Base):
  __tablename__='sales'
  id=Column(Integer,primary_key=True);fitting_id=Column(Integer,ForeignKey('fittings.id'),unique=True,nullable=False);garment_id=Column(Integer,ForeignKey('garments.id'),nullable=False);price_cents=Column(Integer,nullable=False);commission_bp=Column(Integer,nullable=False);commission_cents=Column(Integer,nullable=False);net_cents=Column(Integer,nullable=False);sold_at=Column(String(32),nullable=False);return_deadline=Column(String(32),nullable=False);state=Column(String(20),default='completed',nullable=False)

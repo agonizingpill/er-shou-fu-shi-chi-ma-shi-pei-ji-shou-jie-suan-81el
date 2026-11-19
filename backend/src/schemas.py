@@ -1,5 +1,6 @@
 from pydantic import BaseModel,ConfigDict,Field
 from typing import Literal
+from .constants import FIT_LABELS
 class Input(BaseModel):model_config=ConfigDict(extra='forbid',str_strip_whitespace=True,allow_inf_nan=False)
 class Login(Input):
  email:str;password:str
@@ -29,3 +30,12 @@ class PayoutIn(Input):
  sale_id:int;reference:str=Field(min_length=3,max_length=60)
 class ReasonIn(Input):reason:str=Field(min_length=8,max_length=500)
 class ClockIn(ReasonIn):now:str
+FitLabel=Literal['合身','偏紧','偏松']
+class TrialStartIn(Input):
+ fitting_id:int
+class TrialCompleteIn(Input):
+ fitting_id:int;actual:FitLabel
+class TrialRevisionIn(Input):
+ trial_id:int;base_version:int=Field(ge=1);actual:FitLabel;reason:str=Field(min_length=8,max_length=500)
+class DailyReportIn(Input):
+ day:str=Field(min_length=10,max_length=10)

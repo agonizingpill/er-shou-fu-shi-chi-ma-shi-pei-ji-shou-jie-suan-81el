@@ -41,6 +41,16 @@ docker compose up -d --build --wait
 
 Shop演示时钟从2026-11-18开始，仅店长可单向推进并留审计，便于重现试衣时间、七天退货和到期，不依赖机器日期。
 
+## 试衣松紧核对与试衣日报
+
+回答店长的问题：**按版型看，模型把实际松紧错判成了哪一类。** 入口在“实测与适配”页（矩阵与日报）和“预约与留衣”页（开试/登记/改判表单），后端规则集中在 `trial_service.py`。
+
+- **开试留建议**：`POST /trials/start` 以预约为单位，取该件衣物+该匿名体型最新一条 `ready` 适配的标签，快照写入 `Trial.suggested`；没有适配结果（未计算或失败）存 `null`，日报里单列为“无建议”另计，不与任何模型标签混算。归账日期 `fitting_day` 取**预约开始日**，与实际登记时刻无关。一个预约只能开试一次（fitting_id 唯一）。
+- **试完登记**：`POST /trials/complete` 记录实际松紧（合身/偏紧/偏松），试衣由 `in_progress` 转 `completed`；重复登记被拒，更正必须走改判。
+- **迟到记录与改判归试衣当天**：演示时钟推进到次日再补登记、再改判，记录仍归入原 `fitting_day`，重跑该日日报即可纳入，已发出的原版不会被覆盖。
+- **两人同时改判**：`POST /trials/revise` 要求带 `base_version`，后端先锁 Shop 再对 Trial 行 `SELECT ... FOR UPDATE`；版本不一致返回 409 并提示当前最新版本，后一位刷新看到最新判定后基于新版本才能改。每次改判在 `TrialRevision` 留前后值、理由、改判人和时间，Trial 版本号递增；同值改判拒绝。
+- **日报重跑不重复计数**：`POST /daily-reports/run {day}` 对该日全部已完成试衣按版型（0贴身/1标准/2宽松）生成“实际松紧 ＼ 模型建议”矩阵，并对完整 payload 计算 SHA256 指纹。指纹与最新版一致时只把 `reused` 加一、沿用原记录；数据变化（迟到登记或改判）才生成下一版本，原版与修订版同时保留，店长可在页面折叠对照两版矩阵。viewer 可读全部版本，写接口由后端独立拒绝。
+
 ## 真实机器学习
 
 `fit_model.py`生成seed42的300条**模拟标注**样本，特征为胸围余量、肩宽余量、弹性、版型；三类合身/偏紧/偏松各100条。先分层留出25%（训练225/留出75），Pipeline仅在训练集拟合StandardScaler，再拟合KNeighborsClassifier(k=5, weights=distance)。输出本件与本人的特征、分类概率、balanced accuracy、混淆矩阵、训练/留出ID和训练/输入SHA256。验收balanced accuracy=1.0，只表示该合成分布可分，不代表真实体型或舒适度预测准确率，最终由试衣确认。
@@ -49,9 +59,9 @@ worker通过Redis BLPOP读取实际FitAssessment，结果持久化。Redis短暂
 
 ## 结构、枚举与开发
 
-backend/src/models.py为寄售关系模型，schemas.py严格字段校验与非有限值拒绝；consignment_service、fit_service、fitting_service、sale_service、return_service、settlement_service分别封装六领域规则。routes.py做JWT权限，common.py做父锁/审计，fit_model/worker负责计算。middlewares.py有RequestTrace及Recovery。
+backend/src/models.py为寄售关系模型，schemas.py严格字段校验与非有限值拒绝；consignment_service、fit_service、fitting_service、sale_service、return_service、settlement_service、trial_service分别封装七领域规则。routes.py做JWT权限，common.py做父锁/审计，fit_model/worker负责计算。middlewares.py有RequestTrace及Recovery。新增表 Trial（开试建议快照与版本）、TrialRevision（改判留痕）、DailyReport（按日版本化日报，含payload与SHA256数据指纹）。
 
-frontend/src/pages六页独立业务任务，components/tailor.js含衣物吊牌、状态、标题/表单等共享组件，utils/api.js做请求/会话/store、utils/format.js做转义/数据类型。角色、服饰状态、适配类别枚举在backend/src/constants.py；前端角色/状态在frontend/src/constants.js，算法标签与展示文案对应。
+frontend/src/pages六页独立业务任务（开试/登记/改判在预约页，错判矩阵与版本化日报在实测页，共享逻辑在pages/trial.js），components/tailor.js含衣物吊牌、状态、标题/表单等共享组件，utils/api.js做请求/会话/store、utils/format.js做转义/数据类型。角色、服饰状态、适配类别、试衣状态、版型名称与“无建议”枚举在backend/src/constants.py；前端角色/状态/版型在frontend/src/constants.js，算法标签与展示文案对应。
 
 ```bash
 docker compose exec -T backend python scripts/seed_demo.py
@@ -64,6 +74,6 @@ seed自然键补缺，已有佣金修订、状态与结算/退货完整保留。
 
 ## 已知边界
 
-单店两试衣位，匿名体型不含真实身份；合成样本不代表真实尺码适配质量。实测只录一次，未做历史测量修订。所有金额为整数分、仅同一模拟币种，无支付网关、退货退款外部调用或电子合同。需要显式取消过期留衣或期满撤回来释放，未做自动预约到时任务。Shop全店父锁优先小规模正确性，吞吐有限。BLPOP弹出任务后被强杀仍不自动重投，短暂Redis断线可恢复；没有生产迁移和多店隔离。
+单店两试衣位，匿名体型不含真实身份；合成样本不代表真实尺码适配质量。实测只录一次，未做历史测量修订。所有金额为整数分、仅同一模拟币种，无支付网关、退货退款外部调用或电子合同。需要显式取消过期留衣或期满撤回来释放，未做自动预约到时任务。试衣登记以预约为单位、一预约一试衣，改判只追加留痕不删除历史；日报按试衣当天归账且仅按数据指纹决定是否出新版本，不做定时自动出报。Shop全店父锁优先小规模正确性，吞吐有限。BLPOP弹出任务后被强杀仍不自动重投，短暂Redis断线可恢复；没有生产迁移和多店隔离。
 
 License: MIT（本项目新增源码）。
